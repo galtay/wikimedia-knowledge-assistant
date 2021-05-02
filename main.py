@@ -193,7 +193,8 @@ def wikimedia_go(
         }
         output.append(element)
 
-    logger.info("finished")
+    t_end = time()
+    logger.info("finished in %.4f seconds", t_end-t_start)
 
     return {
         'text': text,
