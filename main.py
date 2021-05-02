@@ -4,18 +4,25 @@ Keybert
 
 Wikimedia search API
  * https://www.mediawiki.org/wiki/API:Search
+
 Looks like max query string length is 300 characters
  * https://phabricator.wikimedia.org/T107947
  * https://en.wikipedia.org/wiki/Help:Searching
+
+Wikipedia action API action=query
+* https://www.mediawiki.org/wiki/API:Query
+
+https://www.mediawiki.org/wiki/API:Page_info_in_search_results
+https://www.mediawiki.org/wiki/Extension:TextExtracts#Cav
 
 TO DO
  * find bug that causes empty keyword list for text 4 with topn=14
 
 
 """
-import itertools
 import logging
 import requests
+from time import time
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 
@@ -60,6 +67,30 @@ after the World Health Organization declared the coronavirus outbreak a pandemic
 """
 
 
+WP_SEARCH_PARAMS = {
+    "action": "query",
+    "format": "json",
+    "list": "search",
+    "formatversion": 2,
+}
+
+WP_PAGE_INFO_PARAMS = {
+    "action": "query",
+    "format": "json",
+    "formatversion": 2,
+    "redirect": 1,
+    "prop": "pageprops|pageterms|pageimages|extracts",
+    "exintro": 1,
+    "explaintext": 1,  # turn this off to get html, but its missing stuff too
+}
+
+WD_ITEM_PARAMS = {
+    "action": "wbgetentities",
+    "format": "json",
+    "languages": "en",
+}
+
+
 def get_keywords(model, text, top_n=10, ngram_range=(1, 2), diversity=0.6):
 
     try_top_n = top_n
@@ -89,12 +120,17 @@ def wikimedia_go(
         keywords_topn=10,
         keywords_ngram_range=(1, 2),
         keywords_diversity=0.6,
+        wp_base_url="https://en.wikipedia.org/w/api.php",
+        wd_base_url="https://www.wikidata.org/w/api.php",
 ):
 
-    logger.info("text: {}".format(text))
+    t_start = time()
+    logger.info("model: % s", model)
+    logger.info("text: % s", ' '.join(text.split('\n')))
 
     # get keywords from text
-    #=====================================================
+    # =====================================================
+    t0 = time()
     keywords = get_keywords(
         model,
         text,
@@ -102,86 +138,75 @@ def wikimedia_go(
         ngram_range=keywords_ngram_range,
         diversity=keywords_diversity,
     )
+    logger.info("extracting keywords took %.4f seconds", time()-t0)
+    logger.info("keywords: % s", keywords)
 
-    logger.info("keywords: {}".format(keywords))
-
-    # get wikipedia pages from keywords
-    #=====================================================
+    # send keywords to wikipedia search api
+    # =====================================================
     keywords_or = " OR ".join([el[0] for el in keywords])
-    url = "https://en.wikipedia.org/w/api.php"
-    params = {
-        "action": "query",
-        "format": "json",
-        "list": "search",
-        "srsearch": keywords_or,
-        "srprop": "size|wordcount|timestamp|snippet|sectiontitle|sectionsnippet",
-    }
-    response = requests.get(url=url, params=params)
-    response_json = response.json()
-    pages = response_json['query']['search']
+    wp_search_params = {"srsearch": keywords_or, **WP_SEARCH_PARAMS}
+    logger.info("querying wikipedia search api using keywords")
+    t0 = time()
+    wp_search_response = requests.get(url=wp_base_url, params=wp_search_params)
+    logger.info("wikipedia search took %.4f seconds", time()-t0)
+    wp_search_response_json = wp_search_response.json()
+    assert('batchcomplete' in wp_search_response_json)
+    wp_search = wp_search_response_json['query']['search']
 
-    # get wikidata item ids from page ids
-    #=====================================================
-    page_ids = [el['pageid'] for el in pages]
+    # get extra information on pages returned by search
+    # =====================================================
+    page_ids = [el['pageid'] for el in wp_search]
     page_ids_pipe = "|".join([str(el) for el in page_ids])
-    url = "https://en.wikipedia.org/w/api.php"
-    params = {
-        "action": "query",
-        "format": "json",
-        "prop": "pageprops",
-        "ppprop": "wikibase_item",
-        "redirects": "1",
-        "pageids": page_ids_pipe,
-    }
-    response = requests.get(url=url, params=params)
-    response_json = response.json()
-    page_to_item = response_json['query']['pages']
-
-    # add wikidata item ids to pages
-    #=====================================================
-    page_id_to_page = {
-        str(page['pageid']): page for page in pages
-    }
-    for pageid, p2i in page_to_item.items():
-        page_id_to_page[pageid]['itemid'] = p2i['pageprops']['wikibase_item']
+    wp_info_params = {"pageids": page_ids_pipe, **WP_PAGE_INFO_PARAMS}
+    logger.info("querying wikipedia for page info")
+    t0 = time()
+    wp_info_response = requests.get(url=wp_base_url, params=wp_info_params)
+    logger.info("wikipedia info took %.4f seconds", time()-t0)
+    wp_info_response_json = wp_info_response.json()
+    assert('batchcomplete' in wp_info_response_json)
+    wp_pages = wp_info_response.json()['query']['pages']
 
     # get wikidata items from item ids
-    #=====================================================
-    item_ids = [el['itemid'] for el in pages]
+    # =====================================================
+    item_ids = [el['pageprops']['wikibase_item'] for el in wp_pages]
     item_ids_pipe = "|".join(item_ids)
-    url = "https://www.wikidata.org/w/api.php"
-    params = {
-        "action": "wbgetentities",
-        "format": "json",
-        "languages": "en",
-        "ids": item_ids_pipe,
-    }
-    response = requests.get(url=url, params=params)
-    response_json = response.json()
-    items = response_json['entities']
+    wd_item_params = {"ids": item_ids_pipe, **WD_ITEM_PARAMS}
+    logger.info("querying wikidata for item info")
+    t0 = time()
+    wd_response = requests.get(url=wd_base_url, params=wd_item_params)
+    logger.info("wikidata took %.4f seconds", time()-t0)
+    wd_response_json = wd_response.json()
+    entities = wd_response_json['entities']
 
-    # add wikidata item ids to pages
-    #=====================================================
-    item_id_to_page = {
-        page['itemid']: page for page in pages
-    }
-    for itemid, item in items.items():
-        item_id_to_page[itemid]['entity'] = item
+    # make pageid maps and group final output
+    # preserve the order in search (sorted by relevance)
+    # =====================================================
+    pageid_to_item_id = {el['pageid']: el['pageprops']['wikibase_item'] for el in wp_pages}
+    pageid_to_wp_pages = {el['pageid']: el for el in wp_pages}
 
+    output = []
+    for search in wp_search:
+        element = {
+            'search': search,
+            'page': pageid_to_wp_pages[search['pageid']],
+            'entity': entities[pageid_to_item_id[search['pageid']]],
+        }
+        output.append(element)
+
+    logger.info("finished")
 
     return {
         'text': text,
         'keywords': keywords,
-        'pages': pages,
-        'page_id_to_page': page_id_to_page,
-        'page_to_item': page_to_item,
+        'output': output,
+        'wp_search': wp_search,
+        'wp_pages': wp_pages,
+        'entities': entities,
     }
 
 if __name__ == '__main__':
 
-    logging.basicConfig(
-        format='[%(funcName)s() ] %(message)s',
-        level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
     sbert_model_name = 'distilbert-base-nli-mean-tokens'
     sentence_transformer_model = SentenceTransformer(
         sbert_model_name, device="cpu")
