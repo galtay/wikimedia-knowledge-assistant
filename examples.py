@@ -1,5 +1,5 @@
 import logging
-from time import time
+import time
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from wikimedia_knowledge_assistant import get_keybert_keywords, wikimedia_go
@@ -67,7 +67,7 @@ def make_report(wgo, text):
 
 if __name__ == '__main__':
 
-    #logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
 
     # load model
@@ -85,7 +85,7 @@ if __name__ == '__main__':
     wgos_and_text = []
     for text in texts:
 
-        t0 = time()
+        t0 = time.time()
         keywords_and_scores = get_keybert_keywords(
             keybert_model,
             text,
@@ -93,12 +93,12 @@ if __name__ == '__main__':
             ngram_range=keywords_ngram_range,
             diversity=keywords_diversity,
         )
-        logger.info("extracting keywords took %.4f seconds", time()-t0)
+        logger.info("extracting keywords took %.4f seconds", time.time()-t0)
 
         keywords = [el[0] for el in keywords_and_scores]
         wgo = wikimedia_go(keywords)
         wgos_and_text.append((wgo, text))
-
+        time.sleep(1)
 
     # get wikimedia info
     # =====================================================

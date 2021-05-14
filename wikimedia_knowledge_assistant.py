@@ -30,7 +30,7 @@ Wikipedia action API action=query
 TO DO
 =====
 * bug in `extract_keywords` causes empty keyword list for text 4 with topn=14
-* remove while loop once above is fixed 
+* remove while loop once above is fixed
 
 """
 import logging
@@ -43,8 +43,11 @@ import keybert
 
 logger = logging.getLogger(__name__)
 
+USER_AGENT = "wikimedia knowledge assistant https://github.com/galtay/wikimedia-knowledge-assistant"
+HEADERS = {"User-Agent": USER_AGENT}
 
-# add "srsearch": "text you want to search" key value pair 
+
+# add "srsearch": "text you want to search" key value pair
 WP_STATIC_SEARCH_PARAMS = {
     "action": "query",
     "format": "json",
@@ -72,9 +75,9 @@ WD_STATIC_ITEM_PARAMS = {
 
 
 def get_keybert_keywords(
-    model: keybert.KeyBERT, 
-    text: str, 
-    top_n: int=10, 
+    model: keybert.KeyBERT,
+    text: str,
+    top_n: int=10,
     ngram_range: Tuple[int, int]=(1, 2),
     diversity: float=0.6
 ) -> List[Tuple[str, float]]:
@@ -118,7 +121,10 @@ def wikimedia_go(
     wp_search_params = {"srsearch": keywords_or, **WP_STATIC_SEARCH_PARAMS}
     logger.info("querying wikipedia search api using keywords")
     t0 = time()
-    wp_search_response = requests.get(url=wp_base_url, params=wp_search_params)
+    wp_search_response = requests.get(
+        url=wp_base_url,
+        params=wp_search_params,
+        headers=HEADERS)
     logger.info("wikipedia search took %.4f seconds", time()-t0)
     wp_search_response_json = wp_search_response.json()
     # TODO: handle continuation results
@@ -132,7 +138,10 @@ def wikimedia_go(
     wp_info_params = {"pageids": page_ids_pipe, **WP_STATIC_PAGE_INFO_PARAMS}
     logger.info("querying wikipedia for page info")
     t0 = time()
-    wp_info_response = requests.get(url=wp_base_url, params=wp_info_params)
+    wp_info_response = requests.get(
+        url=wp_base_url,
+        params=wp_info_params,
+        headers=HEADERS)
     logger.info("wikipedia info took %.4f seconds", time()-t0)
     wp_info_response_json = wp_info_response.json()
     # TODO: handle continuation results
@@ -151,7 +160,10 @@ def wikimedia_go(
     wd_item_params = {"ids": item_ids_pipe, **WD_STATIC_ITEM_PARAMS}
     logger.info("querying wikidata for item info")
     t0 = time()
-    wd_response = requests.get(url=wd_base_url, params=wd_item_params)
+    wd_response = requests.get(
+        url=wd_base_url,
+        params=wd_item_params,
+        headers=HEADERS)
     logger.info("wikidata took %.4f seconds", time()-t0)
     wd_response_json = wd_response.json()
     wd_entities = wd_response_json['entities']
@@ -166,7 +178,7 @@ def wikimedia_go(
     # preserve the order in search (sorted by relevance)
     # =====================================================
     pageid_to_item_id = {
-        el['pageid']: el['pageprops']['wikibase_item'] 
+        el['pageid']: el['pageprops']['wikibase_item']
         for el in wp_pages if 'pageprops' in el}
     pageid_to_wp_pages = {el['pageid']: el for el in wp_pages}
 
@@ -188,4 +200,3 @@ def wikimedia_go(
         'keywords': keywords,
         'output': output,
     }
-
